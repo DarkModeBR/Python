@@ -464,10 +464,13 @@ def coletar_dados_resumo() -> dict:
     }
 
 
-def analisar_com_gemini() -> dict:
+def analisar_com_api() -> dict:
     import urllib.request
+    import json
+    import re
 
-    print("\n🤖 Consultando Gemini...")
+    print("\n🤖 Consultando API...")
+
     dados = coletar_dados_resumo()
 
     prompt = f"""
@@ -507,9 +510,13 @@ Retorne exatamente neste formato:
 }}
 """
 
-    payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+    payload = json.dumps({
+        "message": prompt,
+        "provider": "chatgpt"
+    }).encode("utf-8")
+
     req = urllib.request.Request(
-        f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+        "https://darkscrapper.squareweb.app/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST"
@@ -518,19 +525,28 @@ Retorne exatamente neste formato:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             resposta = json.loads(resp.read().decode("utf-8"))
-        texto = resposta["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        texto = resposta.get("reply", "").strip()
+
+        # limpa possíveis blocos ```json
         texto = re.sub(r"^```(?:json)?\s*", "", texto)
         texto = re.sub(r"\s*```$", "", texto)
+
         resultado = json.loads(texto)
-        print("  ✅ Gemini respondeu OK")
+
+        print("  ✅ API respondeu OK")
         return resultado
+
     except urllib.error.HTTPError as e:
         erro = e.read().decode()
         print(f"  ❌ Erro HTTP {e.code}: {erro}")
         return {"erro": f"HTTP {e.code}: {erro}"}
+
     except json.JSONDecodeError as e:
-        print(f"  ❌ Gemini não retornou JSON válido: {e}")
-        return {"erro": "Resposta inválida do Gemini."}
+        print(f"  ❌ Resposta não é JSON válido: {e}")
+        print("Resposta recebida:", texto)
+        return {"erro": "Resposta inválida da API."}
+
     except Exception as e:
         print(f"  ❌ Erro: {e}")
         return {"erro": str(e)}
