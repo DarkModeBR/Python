@@ -7,5 +7,5 @@ def conectar():
         port=int(os.getenv("DB_PORT", "7200")),
         user=os.getenv("DB_USER", "squarecloud"),
         password=os.getenv("DB_PASS", "626wMS71k1qWsCadpnnnmlyu"),
-        database=os.getenv("DB_NAME", "railway"),
+        database=os.getenv("DB_NAME", "squarecloud"),
     )
