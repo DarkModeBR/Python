@@ -15,7 +15,7 @@ app = FastAPI(title="PIM 2026 — Python API", version="1.0.0")
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("NODEJS_URL", "http://localhost:3000")],
+    allow_origins=[os.getenv("NODEJS_URL", "https://smartretail.squareweb.app/")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
