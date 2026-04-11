@@ -429,40 +429,9 @@ def gerar_painel() -> dict:
             print(f"  ❌ {nome}: {e}")
     return painel
 
-
 # ══════════════════════════════════════════════
-#  ANÁLISE COM GEMINI
+#  ANÁLISE COM API (SUBSTITUI GEMINI)
 # ══════════════════════════════════════════════
-
-GEMINI_API_KEY = "AIzaSyDgB6PR9Vi67MrzrFsFBmNCqpPgPl7hUzQ"
-GEMINI_URL     = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-
-
-def coletar_dados_resumo() -> dict:
-    vendas = buscar_dados("""
-        SELECT COUNT(*)                          AS total_pedidos,
-               ROUND(SUM(Valor_Total_Pedido), 2) AS vendas_totais,
-               ROUND(AVG(Valor_Total_Pedido), 2) AS receita_media
-        FROM Pedidos WHERE Valor_Total_Pedido IS NOT NULL
-    """)
-    produto_top = buscar_dados("""
-        SELECT p.Nome_Produto, SUM(ip.Quantidade_Item) AS total_vendido
-        FROM Itens_Pedido ip
-        JOIN Produtos p ON p.ID_Produto = ip.ID_Produto_Item
-        GROUP BY p.Nome_Produto ORDER BY total_vendido DESC LIMIT 3
-    """)
-    por_mes = buscar_dados("""
-        SELECT DATE_FORMAT(Data_Pedido,'%Y-%m')  AS mes,
-               ROUND(SUM(Valor_Total_Pedido), 2) AS total
-        FROM Pedidos WHERE Data_Pedido IS NOT NULL
-        GROUP BY mes ORDER BY mes DESC LIMIT 3
-    """)
-    return {
-        "geral": vendas.to_dict(orient="records")[0] if not vendas.empty else {},
-        "top3":  produto_top.to_dict(orient="records"),
-        "meses": por_mes.to_dict(orient="records"),
-    }
-
 
 def analisar_com_api() -> dict:
     import urllib.request
@@ -528,11 +497,18 @@ Retorne exatamente neste formato:
 
         texto = resposta.get("reply", "").strip()
 
-        # limpa possíveis blocos ```json
+        if not texto:
+            return {"erro": "API retornou vazio"}
+
+        # remove markdown ```json
         texto = re.sub(r"^```(?:json)?\s*", "", texto)
         texto = re.sub(r"\s*```$", "", texto)
 
-        resultado = json.loads(texto)
+        try:
+            resultado = json.loads(texto)
+        except:
+            print("⚠️ Resposta bruta:", texto)
+            return {"erro": "JSON inválido", "raw": texto}
 
         print("  ✅ API respondeu OK")
         return resultado
@@ -542,18 +518,17 @@ Retorne exatamente neste formato:
         print(f"  ❌ Erro HTTP {e.code}: {erro}")
         return {"erro": f"HTTP {e.code}: {erro}"}
 
-    except json.JSONDecodeError as e:
-        print(f"  ❌ Resposta não é JSON válido: {e}")
-        print("Resposta recebida:", texto)
-        return {"erro": "Resposta inválida da API."}
-
     except Exception as e:
         print(f"  ❌ Erro: {e}")
         return {"erro": str(e)}
 
 
+# 🔁 COMPATIBILIDADE COM CÓDIGO ANTIGO
+analisar_com_gemini = analisar_com_api
+
+
 # ══════════════════════════════════════════════
-#  MENU INTERATIVO
+#  MENU INTERATIVO (CORRIGIDO)
 # ══════════════════════════════════════════════
 
 def menu():
@@ -564,7 +539,7 @@ def menu():
         print("  1. Importar CSV para o banco")
         print("  2. Gerar análises do painel (ML)")
         print("  3. Importar CSV + gerar análises")
-        print("  4. Análise com Gemini (cards do painel)")
+        print("  4. Análise inteligente (API)")
         print("  0. Sair")
         print("═"*45)
         op = input("Opção: ").strip()
@@ -598,14 +573,9 @@ def menu():
             resultado = gerar_painel()
             print("\n" + json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
 
-        # Não mexer aqui, chave da API da erro se colocar e se retirar da erro também
         elif op == "4":
-            if GEMINI_API_KEY == "":
-                print("\n⚠️  Configure sua API key na variável GEMINI_API_KEY no app.py")
-                print("   Acesse: https://aistudio.google.com/app/apikey")
-            else:
-                resultado = analisar_com_gemini()
-                print("\n" + json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
+            resultado = analisar_com_api()
+            print("\n" + json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
 
         else:
             print("Opção inválida.")
