@@ -3,23 +3,35 @@ import io
 import json
 import tempfile
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 
-# Importa as funções dos módulos originais
-from app import importar_csv, gerar_painel, analisar_com_gemini
+from app import importar_csv, gerar_painel, resetar_dados_usuario, analisar_com_api
+from database import get_usuario_id
 
 app = FastAPI(title="PIM 2026 — Python API", version="1.0.0")
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("NODEJS_URL", "https://smartretail.squareweb.app/")],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def verificar_usuario(x_user_id: Optional[str] = Header(None)):
+    """Verifica se o usuário existe e retorna o ID"""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="Usuário não autenticado")
+    
+    usuario_id = get_usuario_id(x_user_id)
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Usuário não encontrado")
+    
+    return usuario_id
 
 
 # ─── Health ───────────────────────────────────────────────────────────────────
@@ -32,8 +44,11 @@ def health():
 @app.post("/upload/csv")
 async def upload_csv(
     arquivo: UploadFile = File(...),
-    tabela:  Optional[str] = Form(None)
+    tabela: Optional[str] = Form(None),
+    x_user_id: Optional[str] = Header(None)
 ):
+    usuario_id = verificar_usuario(x_user_id)
+    
     if not arquivo.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Apenas arquivos .csv são permitidos.")
 
@@ -51,11 +66,11 @@ async def upload_csv(
         tmp_path = tmp.name
 
     try:
-        total = importar_csv(tmp_path, tabela=tabela or None)
+        total = importar_csv(tmp_path, usuario_id, tabela=tabela or None)
         return {
             "mensagem": f"{total} linha(s) importada(s) com sucesso.",
-            "arquivo":  arquivo.filename,
-            "linhas":   total,
+            "arquivo": arquivo.filename,
+            "linhas": total,
         }
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -67,39 +82,58 @@ async def upload_csv(
 
 # ─── Painel (ML + Gemini) ─────────────────────────────────────────────────────
 @app.get("/painel")
-def painel():
-    """
-    Executa todas as análises de ML + análise Gemini
-    e retorna um dict com tudo junto.
-    """
-    resultado = gerar_painel()
-
-    # Tenta enriquecer com análise do Gemini
+def painel(x_user_id: Optional[str] = Header(None)):
+    """Executa todas as análises de ML para o usuário"""
+    usuario_id = verificar_usuario(x_user_id)
+    resultado = gerar_painel(usuario_id)
+    
+    # Tenta enriquecer com análise da API
     try:
-        resultado["gemini"] = analisar_com_gemini()
+        resultado["gemini"] = analisar_com_api(usuario_id)
     except Exception as e:
         resultado["gemini"] = {"erro": str(e)}
-
+    
     return resultado
+
+
+# ─── Reset dados do usuário ───────────────────────────────────────────────────
+@app.delete("/reset")
+def resetar_dados(x_user_id: Optional[str] = Header(None)):
+    usuario_id = verificar_usuario(x_user_id)
+    resultado = resetar_dados_usuario(usuario_id)
+    
+    if resultado["success"]:
+        return {"mensagem": resultado["mensagem"]}
+    else:
+        raise HTTPException(status_code=500, detail=resultado["erro"])
 
 
 # ─── Rotas individuais (opcionais) ────────────────────────────────────────────
 @app.get("/painel/vendas")
-def vendas():
+def vendas(x_user_id: Optional[str] = Header(None)):
     from app import prever_vendas
-    return prever_vendas()
+    usuario_id = verificar_usuario(x_user_id)
+    return prever_vendas(usuario_id)
 
 @app.get("/painel/produtos")
-def produtos():
+def produtos(x_user_id: Optional[str] = Header(None)):
     from app import prever_demanda_produtos
-    return prever_demanda_produtos()
+    usuario_id = verificar_usuario(x_user_id)
+    return prever_demanda_produtos(usuario_id)
 
 @app.get("/painel/risco")
-def risco():
+def risco(x_user_id: Optional[str] = Header(None)):
     from app import classificar_risco_pedidos
-    return classificar_risco_pedidos()
+    usuario_id = verificar_usuario(x_user_id)
+    return classificar_risco_pedidos(usuario_id)
 
 @app.get("/painel/segmentacao")
-def segmentacao():
+def segmentacao(x_user_id: Optional[str] = Header(None)):
     from app import segmentar_clientes
-    return segmentar_clientes()
+    usuario_id = verificar_usuario(x_user_id)
+    return segmentar_clientes(usuario_id)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
