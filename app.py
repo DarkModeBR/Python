@@ -482,7 +482,7 @@ def analisar_com_api(usuario_id: int) -> dict:
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             resposta = json.loads(resp.read().decode("utf-8"))
 
         texto = resposta.get("reply", "").strip()
