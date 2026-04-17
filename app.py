@@ -6,7 +6,7 @@ import os
 import json
 from datetime import datetime
 from typing import Optional
-from database import conectar, get_usuario_id, limpar_dados_usuario
+from database import conectar, get_engine, get_usuario_id, limpar_dados_usuario
 
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -152,8 +152,14 @@ def remover_duplicatas(df, subset, tabela):
 
 
 def converter_tipo(v):
+    # ✅ FIX: pd.NA e pd.NaT não são reconhecidos por "v is None" — tratar explicitamente
     if v is None:
         return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
     if isinstance(v, pd.Timestamp):
         return v.to_pydatetime()
     if hasattr(v, "item"):
@@ -181,7 +187,11 @@ def padronizar_clientes(caminho: str) -> pd.DataFrame:
     df = df.dropna(subset=["Nome_Cliente", "Cidade_Cliente"])
     print(f"  ✅ {antes - len(df)} nulo(s) removido(s).")
     df = remover_duplicatas(df, ["Email_Cliente"], "Clientes")
-    cols = [c for c in ["Nome_Cliente", "Email_Cliente", "Cidade_Cliente", "Data_Cadastro_Cliente", "Senha_Cliente_Hash"] if c in df.columns]
+    # ✅ FIX: Senha_Cliente_Hash pode não existir na tabela do banco — só inclui se vier no CSV
+    colunas_possiveis = ["Nome_Cliente", "Email_Cliente", "Cidade_Cliente", "Data_Cadastro_Cliente"]
+    if "Senha_Cliente_Hash" in df.columns:
+        colunas_possiveis.append("Senha_Cliente_Hash")
+    cols = [c for c in colunas_possiveis if c in df.columns]
     print(f"  ✅ {len(df)} cliente(s) prontos.")
     return df[cols].reset_index(drop=True)
 
@@ -332,9 +342,10 @@ def buscar_dados_com_usuario(query: str, usuario_id: int) -> pd.DataFrame:
     q = re.sub(r'\bClientes\b',     '_clientes', q)
     q = re.sub(r'\bProdutos\b',     '_produtos', q)
     q = re.sub(r'\bItens_Pedido\b', '_itens',    q)
-    conn = conectar()
-    df = pd.read_sql(cte + q, conn)
-    conn.close()
+    # ✅ Usa SQLAlchemy engine para evitar UserWarning do pandas
+    engine = get_engine()
+    with engine.connect() as conn:
+        df = pd.read_sql(cte + q, conn)
     return df
 
 
