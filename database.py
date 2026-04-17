@@ -1,8 +1,22 @@
 import os
 import mysql.connector
 from mysql.connector import Error
+from sqlalchemy import create_engine
+
+def _get_url():
+    host = os.getenv("DB_HOST", "square-cloud-db-01bd976874664d4b80775f7386d40abe.squareweb.app")
+    port = int(os.getenv("DB_PORT", "7200"))
+    user = os.getenv("DB_USER", "squarecloud")
+    pwd  = os.getenv("DB_PASS", "626wMS71k1qWsCadpnnnmlyu")
+    db   = os.getenv("DB_NAME", "squarecloud")
+    return f"mysql+mysqlconnector://{user}:{pwd}@{host}:{port}/{db}"
+
+def get_engine():
+    """SQLAlchemy engine — usado pelo pandas para evitar warnings."""
+    return create_engine(_get_url())
 
 def conectar():
+    """Conexão DBAPI2 pura — usada para INSERT/DELETE/DDL."""
     return mysql.connector.connect(
         host=os.getenv("DB_HOST", "square-cloud-db-01bd976874664d4b80775f7386d40abe.squareweb.app"),
         port=int(os.getenv("DB_PORT", "7200")),
@@ -12,40 +26,10 @@ def conectar():
     )
 
 def get_usuario_id(username: str) -> int:
-    """
-    Busca o ID do usuário pelo nome de usuário.
-    Tenta diferentes nomes possíveis para a coluna ID.
-    """
+    """Busca o ID do usuário pelo nome de usuário"""
     conn = conectar()
     cursor = conn.cursor()
-    
-    # Primeiro, descobre qual é o nome da coluna ID
-    cursor.execute("DESCRIBE Usuarios")
-    colunas = cursor.fetchall()
-    nomes_colunas = [c[0] for c in colunas]
-    
-    # Possíveis nomes para a coluna de ID
-    possiveis_ids = ['usuario_id', 'id_usuario', 'user_id', 'id', 'ID', 'UsuarioID']
-    
-    coluna_id = None
-    for pid in possiveis_ids:
-        if pid in nomes_colunas:
-            coluna_id = pid
-            break
-    
-    if not coluna_id:
-        # Se não encontrar, usa a primeira coluna que parecer ser ID
-        for col in nomes_colunas:
-            if 'id' in col.lower():
-                coluna_id = col
-                break
-    
-    if not coluna_id:
-        cursor.close()
-        conn.close()
-        raise Exception("Não foi possível encontrar coluna de ID na tabela Usuarios")
-    
-    cursor.execute(f"SELECT {coluna_id} FROM Usuarios WHERE nome_usuario = %s", (username,))
+    cursor.execute("SELECT id FROM Usuarios WHERE nome_usuario = %s", (username,))
     result = cursor.fetchone()
     cursor.close()
     conn.close()
@@ -59,10 +43,7 @@ def limpar_dados_usuario(usuario_id: int):
     tabelas = ['Itens_Pedido', 'Pedidos', 'Produtos', 'Clientes']
     
     for tabela in tabelas:
-        try:
-            cursor.execute(f"DELETE FROM {tabela} WHERE usuario_id = %s", (usuario_id,))
-        except Exception as e:
-            print(f"⚠️ Erro ao limpar {tabela}: {e}")
+        cursor.execute(f"DELETE FROM {tabela} WHERE usuario_id = %s", (usuario_id,))
     
     conn.commit()
     cursor.close()
