@@ -6,7 +6,7 @@ import os
 import json
 from datetime import datetime
 from typing import Optional
-from database import conectar, get_engine, get_usuario_id, limpar_dados_usuario
+from database import conectar, get_usuario_id, limpar_dados_usuario
 
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -342,10 +342,14 @@ def buscar_dados_com_usuario(query: str, usuario_id: int) -> pd.DataFrame:
     q = re.sub(r'\bClientes\b',     '_clientes', q)
     q = re.sub(r'\bProdutos\b',     '_produtos', q)
     q = re.sub(r'\bItens_Pedido\b', '_itens',    q)
-    # ✅ Usa SQLAlchemy engine para evitar UserWarning do pandas
-    engine = get_engine()
-    with engine.connect() as conn:
-        df = pd.read_sql(cte + q, conn)
+    # Usa cursor nativo para montar o DataFrame sem precisar de SQLAlchemy
+    conn = conectar()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(cte + q)
+    rows = cursor.fetchall()
+    df = pd.DataFrame(rows)
+    cursor.close()
+    conn.close()
     return df
 
 
