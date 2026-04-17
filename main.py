@@ -40,6 +40,35 @@ def health():
     return {"status": "ok", "service": "python-api"}
 
 
+# ─── Debug: ver estrutura da tabela Usuarios ─────────────────────────────────
+@app.get("/debug/usuarios")
+def debug_usuarios():
+    """Endpoint temporário para debug - verifica estrutura da tabela Usuarios"""
+    from database import conectar
+    conn = conectar()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("DESCRIBE Usuarios")
+        colunas = cursor.fetchall()
+        
+        cursor.execute("SELECT * FROM Usuarios LIMIT 5")
+        usuarios = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "colunas_usuarios": [{"Field": c[0], "Type": c[1], "Key": c[3]} for c in colunas],
+            "usuarios": usuarios,
+            "total_usuarios": len(usuarios)
+        }
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        return {"erro": str(e)}
+
+
 # ─── Upload CSV ───────────────────────────────────────────────────────────────
 @app.post("/upload/csv")
 async def upload_csv(
