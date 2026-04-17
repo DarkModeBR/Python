@@ -315,16 +315,13 @@ def resetar_dados_usuario(usuario_id: int) -> dict:
 # ══════════════════════════════════════════════
 
 def buscar_dados_com_usuario(query: str, usuario_id: int) -> pd.DataFrame:
+    """
+    Envolve a query num subselect e filtra por usuario_id de forma segura,
+    evitando problemas de substituição de string quando já existe WHERE/GROUP BY aninhado.
+    """
     conn = conectar()
-    
-    if "WHERE" in query.upper():
-        query = query.replace("WHERE", f"WHERE usuario_id = {usuario_id} AND ")
-    elif "GROUP BY" in query.upper():
-        query = query.replace("GROUP BY", f"WHERE usuario_id = {usuario_id} GROUP BY")
-    else:
-        query += f" WHERE usuario_id = {usuario_id}"
-    
-    df = pd.read_sql(query, conn)
+    wrapped = f"SELECT * FROM ({query}) AS _sub WHERE usuario_id = %s"
+    df = pd.read_sql(wrapped, conn, params=(usuario_id,))
     conn.close()
     return df
 
