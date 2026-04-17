@@ -316,12 +316,24 @@ def resetar_dados_usuario(usuario_id: int) -> dict:
 
 def buscar_dados_com_usuario(query: str, usuario_id: int) -> pd.DataFrame:
     """
-    Envolve a query num subselect e filtra por usuario_id de forma segura,
-    evitando problemas de substituição de string quando já existe WHERE/GROUP BY aninhado.
+    Filtra por usuario_id substituindo os nomes das tabelas por CTEs já filtrados.
+    Isso evita problemas com WHERE/GROUP BY/HAVING aninhados.
     """
+    import re
+    uid = int(usuario_id)
+    cte = (
+        f"WITH _pedidos  AS (SELECT * FROM Pedidos     WHERE usuario_id = {uid}),\n"
+        f"     _clientes AS (SELECT * FROM Clientes    WHERE usuario_id = {uid}),\n"
+        f"     _produtos AS (SELECT * FROM Produtos    WHERE usuario_id = {uid}),\n"
+        f"     _itens    AS (SELECT * FROM Itens_Pedido WHERE usuario_id = {uid})\n"
+    )
+    q = query
+    q = re.sub(r'\bPedidos\b',      '_pedidos',  q)
+    q = re.sub(r'\bClientes\b',     '_clientes', q)
+    q = re.sub(r'\bProdutos\b',     '_produtos', q)
+    q = re.sub(r'\bItens_Pedido\b', '_itens',    q)
     conn = conectar()
-    wrapped = f"SELECT * FROM ({query}) AS _sub WHERE usuario_id = %s"
-    df = pd.read_sql(wrapped, conn, params=(usuario_id,))
+    df = pd.read_sql(cte + q, conn)
     conn.close()
     return df
 
@@ -670,4 +682,3 @@ def menu():
 
 if __name__ == "__main__":
     menu()
-    
