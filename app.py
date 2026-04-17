@@ -154,7 +154,20 @@ def converter_tipo(v):
     return v
 
 
-def padronizar_clientes(caminho: str) -> pd.DataFrame:
+def obter_mapa_ids(tabela: str, coluna_id: str, usuario_id: int) -> dict:
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT {coluna_id} FROM {tabela} WHERE usuario_id = %s ORDER BY {coluna_id}",
+        (usuario_id,)
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return {i + 1: row[0] for i, row in enumerate(rows)}
+
+
+def padronizar_clientes(caminho: str, usuario_id: int = None) -> pd.DataFrame:
     df = renomear_colunas(ler_csv(caminho), MAPA_CLIENTES)
     verificar_obrigatorias(df, ["Nome_Cliente", "Cidade_Cliente"], "Clientes")
     df["Nome_Cliente"]   = limpar_texto(df["Nome_Cliente"])
@@ -171,7 +184,7 @@ def padronizar_clientes(caminho: str) -> pd.DataFrame:
     return df[cols].reset_index(drop=True)
 
 
-def padronizar_produtos(caminho: str) -> pd.DataFrame:
+def padronizar_produtos(caminho: str, usuario_id: int = None) -> pd.DataFrame:
     df = renomear_colunas(ler_csv(caminho), MAPA_PRODUTOS)
     verificar_obrigatorias(df, ["Nome_Produto", "Categoria_Produto"], "Produtos")
     df["Nome_Produto"]      = limpar_texto(df["Nome_Produto"])
@@ -183,10 +196,14 @@ def padronizar_produtos(caminho: str) -> pd.DataFrame:
     return df[[c for c in ["Nome_Produto", "Categoria_Produto", "Preco_Produto"] if c in df.columns]].reset_index(drop=True)
 
 
-def padronizar_pedidos(caminho: str) -> pd.DataFrame:
+def padronizar_pedidos(caminho: str, usuario_id: int = None) -> pd.DataFrame:
     df = renomear_colunas(ler_csv(caminho), MAPA_PEDIDOS)
     verificar_obrigatorias(df, ["ID_Cliente_Pedido"], "Pedidos")
     df["ID_Cliente_Pedido"] = limpar_inteiro(df["ID_Cliente_Pedido"])
+    if usuario_id is not None:
+        mapa = obter_mapa_ids("Clientes", "ID_Cliente", usuario_id)
+        if mapa:
+            df["ID_Cliente_Pedido"] = df["ID_Cliente_Pedido"].map(mapa)
     if "Data_Pedido" in df.columns:
         df["Data_Pedido"] = limpar_data(df["Data_Pedido"])
     if "Valor_Total_Pedido" in df.columns:
@@ -196,11 +213,18 @@ def padronizar_pedidos(caminho: str) -> pd.DataFrame:
     return df[[c for c in ["ID_Cliente_Pedido", "Data_Pedido", "Valor_Total_Pedido"] if c in df.columns]].reset_index(drop=True)
 
 
-def padronizar_itens_pedido(caminho: str) -> pd.DataFrame:
+def padronizar_itens_pedido(caminho: str, usuario_id: int = None) -> pd.DataFrame:
     df = renomear_colunas(ler_csv(caminho), MAPA_ITENS_PEDIDO)
     verificar_obrigatorias(df, ["ID_Pedido_Item", "ID_Produto_Item"], "Itens_Pedido")
     df["ID_Pedido_Item"]  = limpar_inteiro(df["ID_Pedido_Item"])
     df["ID_Produto_Item"] = limpar_inteiro(df["ID_Produto_Item"])
+    if usuario_id is not None:
+        mapa_pedidos  = obter_mapa_ids("Pedidos",  "ID_Pedido",  usuario_id)
+        mapa_produtos = obter_mapa_ids("Produtos", "ID_Produto", usuario_id)
+        if mapa_pedidos:
+            df["ID_Pedido_Item"]  = df["ID_Pedido_Item"].map(mapa_pedidos)
+        if mapa_produtos:
+            df["ID_Produto_Item"] = df["ID_Produto_Item"].map(mapa_produtos)
     if "Quantidade_Item" in df.columns:
         df["Quantidade_Item"] = limpar_inteiro(df["Quantidade_Item"])
     if "Preco_Unitario_Item" in df.columns:
@@ -270,7 +294,7 @@ def importar_csv(caminho: str, usuario_id: int, tabela: str = None) -> int:
     if not tabela:
         raise ValueError("Não foi possível identificar a tabela. Informe o parâmetro `tabela`.")
     funcao, _ = DETECTORES[tabela]
-    return inserir_no_banco(funcao(caminho), tabela, usuario_id)
+    return inserir_no_banco(funcao(caminho, usuario_id), tabela, usuario_id)
 
 
 def resetar_dados_usuario(usuario_id: int) -> dict:
