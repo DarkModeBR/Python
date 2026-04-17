@@ -54,6 +54,33 @@ def debug_usuarios():
         conn.close()
 
 
+@app.get("/debug/schema")
+def debug_schema():
+    conn = conectar()
+    cursor = conn.cursor()
+    resultado = {}
+    try:
+        for tabela in ("Clientes", "Produtos", "Pedidos", "Itens_Pedido"):
+            try:
+                cursor.execute(f"DESCRIBE {tabela}")
+                cols = cursor.fetchall()
+                cursor.execute(f"SELECT COUNT(*) FROM {tabela}")
+                total = cursor.fetchone()[0]
+                cursor.execute(f"SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{tabela}'")
+                ai = cursor.fetchone()
+                resultado[tabela] = {
+                    "colunas": [c[0] for c in cols],
+                    "total_rows": total,
+                    "auto_increment": ai[0] if ai else None,
+                }
+            except Exception as e:
+                resultado[tabela] = {"erro": str(e)}
+        return resultado
+    finally:
+        cursor.close()
+        conn.close()
+
+
 @app.post("/upload/csv")
 async def upload_csv(
     arquivo: UploadFile = File(...),
