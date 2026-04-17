@@ -4,8 +4,8 @@ import re
 import hashlib
 import os
 import json
-from datetime import datetime
-from typing import Optional
+import urllib.request
+import urllib.error
 from database import conectar, get_usuario_id, limpar_dados_usuario
 
 from sklearn.linear_model import LinearRegression, LogisticRegression
@@ -13,10 +13,6 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-
-# ══════════════════════════════════════════════
-#  MAPEAMENTOS DE COLUNAS
-# ══════════════════════════════════════════════
 
 MAPA_CLIENTES = {
     "nome": "Nome_Cliente", "name": "Nome_Cliente",
@@ -69,10 +65,6 @@ NOME_TABELA = {
 }
 
 
-# ══════════════════════════════════════════════
-#  HELPERS — LIMPEZA DE CSV
-# ══════════════════════════════════════════════
-
 def ler_csv(caminho: str) -> pd.DataFrame:
     for enc in ("utf-8", "latin-1", "utf-8-sig", "cp1252"):
         try:
@@ -100,11 +92,7 @@ def limpar_texto(s: pd.Series) -> pd.Series:
 
 
 def limpar_email(s: pd.Series) -> pd.Series:
-    s = s.astype(str).str.strip().str.lower().apply(lambda x: np.nan if x == "nan" else x)
-    invalidos = ~s.str.match(r"^[\w\.-]+@[\w\.-]+\.\w{2,}$", na=False)
-    if invalidos.any():
-        print(f"  ⚠️  {invalidos.sum()} e-mail(s) com formato inválido.")
-    return s
+    return s.astype(str).str.strip().str.lower().apply(lambda x: np.nan if x == "nan" else x)
 
 
 def limpar_decimal(s: pd.Series) -> pd.Series:
@@ -135,24 +123,19 @@ def hash_senha(s: pd.Series) -> pd.Series:
     return s.apply(_h)
 
 
-def verificar_obrigatorias(df, cols, tabela):
+def verificar_obrigatorias(df: pd.DataFrame, cols: list, tabela: str):
     faltando = [c for c in cols if c not in df.columns]
     if faltando:
         raise ValueError(f"[{tabela}] Colunas obrigatórias não encontradas: {faltando}\n"
                          f"Recebidas: {list(df.columns)}")
 
 
-def remover_duplicatas(df, subset, tabela):
-    antes = len(df)
-    df = df.drop_duplicates(subset=subset, keep="first")
-    removidos = antes - len(df)
-    if removidos:
-        print(f"  🗑️  {removidos} duplicata(s) removida(s) em {tabela}.")
-    return df
+def remover_duplicatas(df: pd.DataFrame, subset: list) -> pd.DataFrame:
+    subset = [c for c in subset if c in df.columns]
+    return df.drop_duplicates(subset=subset or list(df.columns), keep="first")
 
 
 def converter_tipo(v):
-    # ✅ FIX: pd.NA e pd.NaT não são reconhecidos por "v is None" — tratar explicitamente
     if v is None:
         return None
     try:
@@ -167,12 +150,7 @@ def converter_tipo(v):
     return v
 
 
-# ══════════════════════════════════════════════
-#  PADRONIZADORES POR TABELA
-# ══════════════════════════════════════════════
-
 def padronizar_clientes(caminho: str) -> pd.DataFrame:
-    print("\n📋 Processando Clientes...")
     df = renomear_colunas(ler_csv(caminho), MAPA_CLIENTES)
     verificar_obrigatorias(df, ["Nome_Cliente", "Cidade_Cliente"], "Clientes")
     df["Nome_Cliente"]   = limpar_texto(df["Nome_Cliente"])
@@ -183,21 +161,13 @@ def padronizar_clientes(caminho: str) -> pd.DataFrame:
         df["Senha_Cliente_Hash"] = hash_senha(df["Senha_Cliente_Hash"])
     if "Data_Cadastro_Cliente" in df.columns:
         df["Data_Cadastro_Cliente"] = limpar_data(df["Data_Cadastro_Cliente"])
-    antes = len(df)
     df = df.dropna(subset=["Nome_Cliente", "Cidade_Cliente"])
-    print(f"  ✅ {antes - len(df)} nulo(s) removido(s).")
-    df = remover_duplicatas(df, ["Email_Cliente"], "Clientes")
-    # ✅ FIX: Senha_Cliente_Hash pode não existir na tabela do banco — só inclui se vier no CSV
-    colunas_possiveis = ["Nome_Cliente", "Email_Cliente", "Cidade_Cliente", "Data_Cadastro_Cliente"]
-    if "Senha_Cliente_Hash" in df.columns:
-        colunas_possiveis.append("Senha_Cliente_Hash")
-    cols = [c for c in colunas_possiveis if c in df.columns]
-    print(f"  ✅ {len(df)} cliente(s) prontos.")
+    df = remover_duplicatas(df, ["Email_Cliente", "Nome_Cliente"])
+    cols = [c for c in ["Nome_Cliente", "Email_Cliente", "Cidade_Cliente", "Data_Cadastro_Cliente", "Senha_Cliente_Hash"] if c in df.columns]
     return df[cols].reset_index(drop=True)
 
 
 def padronizar_produtos(caminho: str) -> pd.DataFrame:
-    print("\n📦 Processando Produtos...")
     df = renomear_colunas(ler_csv(caminho), MAPA_PRODUTOS)
     verificar_obrigatorias(df, ["Nome_Produto", "Categoria_Produto"], "Produtos")
     df["Nome_Produto"]      = limpar_texto(df["Nome_Produto"])
@@ -205,14 +175,11 @@ def padronizar_produtos(caminho: str) -> pd.DataFrame:
     if "Preco_Produto" in df.columns:
         df["Preco_Produto"] = limpar_decimal(df["Preco_Produto"])
     df = df.dropna(subset=["Nome_Produto", "Categoria_Produto"])
-    df = remover_duplicatas(df, ["Nome_Produto"], "Produtos")
-    cols = [c for c in ["Nome_Produto", "Categoria_Produto", "Preco_Produto"] if c in df.columns]
-    print(f"  ✅ {len(df)} produto(s) prontos.")
-    return df[cols].reset_index(drop=True)
+    df = remover_duplicatas(df, ["Nome_Produto"])
+    return df[[c for c in ["Nome_Produto", "Categoria_Produto", "Preco_Produto"] if c in df.columns]].reset_index(drop=True)
 
 
 def padronizar_pedidos(caminho: str) -> pd.DataFrame:
-    print("\n🛒 Processando Pedidos...")
     df = renomear_colunas(ler_csv(caminho), MAPA_PEDIDOS)
     verificar_obrigatorias(df, ["ID_Cliente_Pedido"], "Pedidos")
     df["ID_Cliente_Pedido"] = limpar_inteiro(df["ID_Cliente_Pedido"])
@@ -221,14 +188,11 @@ def padronizar_pedidos(caminho: str) -> pd.DataFrame:
     if "Valor_Total_Pedido" in df.columns:
         df["Valor_Total_Pedido"] = limpar_decimal(df["Valor_Total_Pedido"])
     df = df.dropna(subset=["ID_Cliente_Pedido"])
-    df = remover_duplicatas(df, ["ID_Cliente_Pedido", "Data_Pedido"], "Pedidos")
-    cols = [c for c in ["ID_Cliente_Pedido", "Data_Pedido", "Valor_Total_Pedido"] if c in df.columns]
-    print(f"  ✅ {len(df)} pedido(s) prontos.")
-    return df[cols].reset_index(drop=True)
+    df = remover_duplicatas(df, ["ID_Cliente_Pedido", "Data_Pedido"])
+    return df[[c for c in ["ID_Cliente_Pedido", "Data_Pedido", "Valor_Total_Pedido"] if c in df.columns]].reset_index(drop=True)
 
 
 def padronizar_itens_pedido(caminho: str) -> pd.DataFrame:
-    print("\n📝 Processando Itens de Pedido...")
     df = renomear_colunas(ler_csv(caminho), MAPA_ITENS_PEDIDO)
     verificar_obrigatorias(df, ["ID_Pedido_Item", "ID_Produto_Item"], "Itens_Pedido")
     df["ID_Pedido_Item"]  = limpar_inteiro(df["ID_Pedido_Item"])
@@ -238,10 +202,8 @@ def padronizar_itens_pedido(caminho: str) -> pd.DataFrame:
     if "Preco_Unitario_Item" in df.columns:
         df["Preco_Unitario_Item"] = limpar_decimal(df["Preco_Unitario_Item"])
     df = df.dropna(subset=["ID_Pedido_Item", "ID_Produto_Item"])
-    df = remover_duplicatas(df, ["ID_Pedido_Item", "ID_Produto_Item"], "Itens_Pedido")
-    cols = [c for c in ["ID_Pedido_Item", "ID_Produto_Item", "Quantidade_Item", "Preco_Unitario_Item"] if c in df.columns]
-    print(f"  ✅ {len(df)} item(ns) prontos.")
-    return df[cols].reset_index(drop=True)
+    df = remover_duplicatas(df, ["ID_Pedido_Item", "ID_Produto_Item"])
+    return df[[c for c in ["ID_Pedido_Item", "ID_Produto_Item", "Quantidade_Item", "Preco_Unitario_Item"] if c in df.columns]].reset_index(drop=True)
 
 
 DETECTORES = {
@@ -253,11 +215,7 @@ DETECTORES = {
 }
 
 
-# ══════════════════════════════════════════════
-#  DETECÇÃO AUTOMÁTICA + INSERÇÃO NO BANCO
-# ══════════════════════════════════════════════
-
-def detectar_tabela(caminho: str) -> Optional[str]:
+def detectar_tabela(caminho: str) -> str | None:
     nome = os.path.basename(caminho).lower()
     for chave in DETECTORES:
         if chave in nome:
@@ -272,34 +230,34 @@ def inserir_no_banco(df: pd.DataFrame, tabela_chave: str, usuario_id: int) -> in
     tabela_sql = NOME_TABELA.get(tabela_chave.lower())
     if not tabela_sql:
         raise ValueError(f"Tabela '{tabela_chave}' não reconhecida.")
-    
+
     df = df.copy()
-    df['usuario_id'] = usuario_id
+    df["usuario_id"] = usuario_id
     df = df.where(pd.notnull(df), None)
-    
+
     colunas = list(df.columns)
-    sql = f"INSERT INTO {tabela_sql} ({', '.join(colunas)}) VALUES ({', '.join(['%s']*len(colunas))})"
+    sql = f"INSERT INTO {tabela_sql} ({', '.join(colunas)}) VALUES ({', '.join(['%s'] * len(colunas))})"
     linhas = [tuple(converter_tipo(v) for v in row) for row in df.itertuples(index=False, name=None)]
-    
+
     conn = conectar()
     cursor = conn.cursor()
     inseridos = 0
-    
+
     try:
         for linha in linhas:
             try:
                 cursor.execute(sql, linha)
                 inseridos += 1
-            except Exception as e:
-                print(f"  ⚠️ Linha ignorada: {e}")
+            except Exception:
+                pass
         conn.commit()
-        print(f"  ✅ {inseridos}/{len(linhas)} linha(s) inserida(s) em {tabela_sql}.")
     except Exception as e:
         conn.rollback()
         raise RuntimeError(f"Erro ao inserir em {tabela_sql}: {e}")
     finally:
         cursor.close()
         conn.close()
+
     return inseridos
 
 
@@ -308,8 +266,7 @@ def importar_csv(caminho: str, usuario_id: int, tabela: str = None) -> int:
     if not tabela:
         raise ValueError("Não foi possível identificar a tabela. Informe o parâmetro `tabela`.")
     funcao, _ = DETECTORES[tabela]
-    df = funcao(caminho)
-    return inserir_no_banco(df, tabela, usuario_id)
+    return inserir_no_banco(funcao(caminho), tabela, usuario_id)
 
 
 def resetar_dados_usuario(usuario_id: int) -> dict:
@@ -320,42 +277,27 @@ def resetar_dados_usuario(usuario_id: int) -> dict:
         return {"success": False, "erro": str(e)}
 
 
-# ══════════════════════════════════════════════
-#  HELPERS — ANÁLISES ML COM FILTRO DE USUÁRIO
-# ══════════════════════════════════════════════
-
 def buscar_dados_com_usuario(query: str, usuario_id: int) -> pd.DataFrame:
-    """
-    Filtra por usuario_id substituindo os nomes das tabelas por CTEs já filtrados.
-    Isso evita problemas com WHERE/GROUP BY/HAVING aninhados.
-    """
-    import re
     uid = int(usuario_id)
     cte = (
-        f"WITH _pedidos  AS (SELECT * FROM Pedidos     WHERE usuario_id = {uid}),\n"
-        f"     _clientes AS (SELECT * FROM Clientes    WHERE usuario_id = {uid}),\n"
-        f"     _produtos AS (SELECT * FROM Produtos    WHERE usuario_id = {uid}),\n"
+        f"WITH _pedidos  AS (SELECT * FROM Pedidos      WHERE usuario_id = {uid}),\n"
+        f"     _clientes AS (SELECT * FROM Clientes     WHERE usuario_id = {uid}),\n"
+        f"     _produtos AS (SELECT * FROM Produtos     WHERE usuario_id = {uid}),\n"
         f"     _itens    AS (SELECT * FROM Itens_Pedido WHERE usuario_id = {uid})\n"
     )
-    q = query
-    q = re.sub(r'\bPedidos\b',      '_pedidos',  q)
-    q = re.sub(r'\bClientes\b',     '_clientes', q)
-    q = re.sub(r'\bProdutos\b',     '_produtos', q)
-    q = re.sub(r'\bItens_Pedido\b', '_itens',    q)
-    # Usa cursor nativo para montar o DataFrame sem precisar de SQLAlchemy
+    q = re.sub(r"\bPedidos\b",      "_pedidos",  query)
+    q = re.sub(r"\bClientes\b",     "_clientes", q)
+    q = re.sub(r"\bProdutos\b",     "_produtos", q)
+    q = re.sub(r"\bItens_Pedido\b", "_itens",    q)
+
     conn = conectar()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(cte + q)
     rows = cursor.fetchall()
-    df = pd.DataFrame(rows)
     cursor.close()
     conn.close()
-    return df
+    return pd.DataFrame(rows)
 
-
-# ══════════════════════════════════════════════
-#  ANÁLISES ML
-# ══════════════════════════════════════════════
 
 def prever_vendas(usuario_id: int, meses_futuros: int = 3) -> dict:
     df = buscar_dados_com_usuario("""
@@ -366,21 +308,21 @@ def prever_vendas(usuario_id: int, meses_futuros: int = 3) -> dict:
         GROUP BY mes
         ORDER BY mes
     """, usuario_id)
-    
+
     if len(df) < 3:
         return {"erro": "Dados insuficientes (mínimo 3 meses)."}
-    
+
     df["idx"] = range(len(df))
     modelo = LinearRegression().fit(df[["idx"]].values, df["total"].values)
     ultimo = df["idx"].max()
-    prev = modelo.predict([[ultimo + i + 1] for i in range(meses_futuros)]).tolist()
-    base = pd.Period(df["mes"].iloc[-1], freq="M")
+    prev   = modelo.predict([[ultimo + i + 1] for i in range(meses_futuros)]).tolist()
+    base   = pd.Period(df["mes"].iloc[-1], freq="M")
     labels = [(base + i + 1).strftime("%Y-%m") for i in range(meses_futuros)]
-    
+
     return {
-        "historico": df[["mes","total"]].to_dict(orient="records"),
-        "previsao": [{"mes": m, "total": round(v, 2)} for m, v in zip(labels, prev)],
-        "tendencia": "alta" if modelo.coef_[0] > 0 else "queda",
+        "historico":    df[["mes", "total"]].to_dict(orient="records"),
+        "previsao":     [{"mes": m, "total": round(v, 2)} for m, v in zip(labels, prev)],
+        "tendencia":    "alta" if modelo.coef_[0] > 0 else "queda",
         "variacao_pct": round((modelo.coef_[0] / (df["total"].mean() or 1)) * 100, 1),
     }
 
@@ -391,16 +333,16 @@ def prever_demanda_produtos(usuario_id: int) -> dict:
                DATE_FORMAT(ped.Data_Pedido,'%Y-%m') AS mes,
                SUM(ip.Quantidade_Item) AS qtd_vendida
         FROM Itens_Pedido ip
-        JOIN Produtos p ON p.ID_Produto = ip.ID_Produto_Item
-        JOIN Pedidos ped ON ped.ID_Pedido = ip.ID_Pedido_Item
+        JOIN Produtos p   ON p.ID_Produto  = ip.ID_Produto_Item
+        JOIN Pedidos  ped ON ped.ID_Pedido = ip.ID_Pedido_Item
         WHERE ped.Data_Pedido IS NOT NULL
         GROUP BY p.Nome_Produto, p.Categoria_Produto, mes
         ORDER BY p.Nome_Produto, mes
     """, usuario_id)
-    
+
     if df.empty:
         return {"erro": "Nenhum dado encontrado."}
-    
+
     resultados = []
     for produto, g in df.groupby("Nome_Produto"):
         g = g.sort_values("mes").reset_index(drop=True)
@@ -410,12 +352,12 @@ def prever_demanda_produtos(usuario_id: int) -> dict:
         modelo = RandomForestRegressor(n_estimators=50, random_state=42)
         modelo.fit(g[["idx"]].values, g["qtd_vendida"].values)
         resultados.append({
-            "produto": produto,
-            "categoria": g["Categoria_Produto"].iloc[0],
-            "total_vendido": int(g["qtd_vendida"].sum()),
+            "produto":           produto,
+            "categoria":         g["Categoria_Produto"].iloc[0],
+            "total_vendido":     int(g["qtd_vendida"].sum()),
             "previsao_prox_mes": max(0, round(modelo.predict([[len(g)]])[0])),
         })
-    
+
     resultados.sort(key=lambda x: x["total_vendido"], reverse=True)
     return {"produtos": resultados}
 
@@ -429,162 +371,114 @@ def classificar_risco_pedidos(usuario_id: int) -> dict:
         WHERE p.Data_Pedido IS NOT NULL AND p.Valor_Total_Pedido IS NOT NULL
         GROUP BY p.ID_Pedido, p.Valor_Total_Pedido, p.Data_Pedido
     """, usuario_id)
-    
+
     if len(df) < 3:
         return {"erro": "Dados insuficientes (mínimo 3 pedidos)."}
-    
-    df["hora"] = pd.to_datetime(df["Data_Pedido"]).dt.hour
-    df["fora"] = ((df["hora"] < 8) | (df["hora"] > 20)).astype(int)
+
+    df["hora"]  = pd.to_datetime(df["Data_Pedido"]).dt.hour
+    df["fora"]  = ((df["hora"] < 8) | (df["hora"] > 20)).astype(int)
     df["valor"] = df["Valor_Total_Pedido"].astype(float)
-    df["qtd"] = df["qtd_itens"].fillna(0).astype(int)
-    
-    X = df[["valor","qtd","fora"]].values
+    df["qtd"]   = df["qtd_itens"].fillna(0).astype(int)
+
+    X = df[["valor", "qtd", "fora"]].values
     y = ((df["valor"] > df["valor"].mean() * 1.5) & (df["fora"] == 1)).astype(int)
-    
+
     if y.sum() < 2:
         y = (df["valor"] > df["valor"].quantile(0.75)).astype(int)
-    
+
     Xs = StandardScaler().fit_transform(X)
     modelo = LogisticRegression(max_iter=500).fit(Xs, y)
     df["risco_score"] = modelo.predict_proba(Xs)[:, 1]
     df["risco"] = df["risco_score"].apply(lambda s: "alto" if s >= 0.6 else ("médio" if s >= 0.35 else "baixo"))
-    
-    return {"pedidos": df[["ID_Pedido","valor","qtd_itens","Data_Pedido","risco","risco_score"]].round({"risco_score":2}).to_dict(orient="records")}
+
+    return {"pedidos": df[["ID_Pedido", "valor", "qtd_itens", "Data_Pedido", "risco", "risco_score"]].round({"risco_score": 2}).to_dict(orient="records")}
 
 
 def segmentar_clientes(usuario_id: int, n_grupos: int = 3) -> dict:
     df = buscar_dados_com_usuario("""
         SELECT c.ID_Cliente, c.Nome_Cliente,
-               COUNT(p.ID_Pedido) AS total_pedidos,
-               SUM(p.Valor_Total_Pedido) AS total_gasto,
-               AVG(p.Valor_Total_Pedido) AS ticket_medio,
+               COUNT(p.ID_Pedido)              AS total_pedidos,
+               SUM(p.Valor_Total_Pedido)        AS total_gasto,
+               AVG(p.Valor_Total_Pedido)        AS ticket_medio,
                DATEDIFF(NOW(), MAX(p.Data_Pedido)) AS dias_desde_ultimo
         FROM Clientes c
         LEFT JOIN Pedidos p ON p.ID_Cliente_Pedido = c.ID_Cliente
         GROUP BY c.ID_Cliente, c.Nome_Cliente
         HAVING total_pedidos > 0
     """, usuario_id)
-    
+
     if len(df) < n_grupos:
         return {"erro": f"Clientes insuficientes para {n_grupos} grupos."}
-    
-    feats = ["total_pedidos","total_gasto","ticket_medio","dias_desde_ultimo"]
+
+    feats = ["total_pedidos", "total_gasto", "ticket_medio", "dias_desde_ultimo"]
     df[feats] = df[feats].fillna(0)
     Xs = StandardScaler().fit_transform(df[feats])
     df["grupo"] = KMeans(n_clusters=n_grupos, random_state=42, n_init=10).fit_predict(Xs)
-    
+
     ordem = df.groupby("grupo")["total_gasto"].mean().sort_values(ascending=False).index
-    mapa = {g: l for g, l in zip(ordem, ["A","B","C"])}
-    df["perfil"] = df["grupo"].map(mapa)
-    
+    df["perfil"] = df["grupo"].map({g: l for g, l in zip(ordem, ["A", "B", "C"])})
+
     resumo = (df.groupby("perfil")
-              .agg(clientes=("ID_Cliente","count"), gasto_medio=("total_gasto","mean"),
-                   ticket_medio=("ticket_medio","mean"), pedidos_medio=("total_pedidos","mean"))
+              .agg(clientes=("ID_Cliente", "count"), gasto_medio=("total_gasto", "mean"),
+                   ticket_medio=("ticket_medio", "mean"), pedidos_medio=("total_pedidos", "mean"))
               .round(2).reset_index().to_dict(orient="records"))
-    
+
     return {
-        "resumo": resumo,
-        "clientes": df[["ID_Cliente","Nome_Cliente","total_pedidos","total_gasto","ticket_medio","perfil"]].round(2).to_dict(orient="records"),
+        "resumo":   resumo,
+        "clientes": df[["ID_Cliente", "Nome_Cliente", "total_pedidos", "total_gasto", "ticket_medio", "perfil"]].round(2).to_dict(orient="records"),
     }
 
 
 def gerar_painel(usuario_id: int) -> dict:
-    print(f"\n📊 Gerando painel de análises para usuário {usuario_id}...")
     painel = {}
-    
     for nome, func in [("vendas", prever_vendas), ("produtos", prever_demanda_produtos),
                        ("risco", classificar_risco_pedidos), ("segmentacao", segmentar_clientes)]:
         try:
             painel[nome] = func(usuario_id)
-            print(f"  ✅ {nome} OK")
         except Exception as e:
             painel[nome] = {"erro": str(e)}
-            print(f"  ❌ {nome}: {e}")
-    
     return painel
 
 
-# ══════════════════════════════════════════════
-#  ANÁLISE COM API
-# ══════════════════════════════════════════════
-
 def coletar_dados_resumo(usuario_id: int) -> dict:
-    vendas = prever_vendas(usuario_id)
+    vendas   = prever_vendas(usuario_id)
     produtos = prever_demanda_produtos(usuario_id)
-    risco = classificar_risco_pedidos(usuario_id)
-    
+    risco    = classificar_risco_pedidos(usuario_id)
     historico = vendas.get("historico", [])
-    total_vendas = sum(h.get("total", 0) for h in historico)
-    
-    top_produtos = produtos.get("produtos", [])
-    produto_mais_vendido = top_produtos[0] if top_produtos else None
-    
-    pedidos = risco.get("pedidos", [])
-    
     return {
-        "total_vendas": total_vendas,
-        "total_pedidos": len(pedidos),
-        "produto_mais_vendido": produto_mais_vendido,
-        "tendencia": vendas.get("tendencia", "estável"),
+        "total_vendas":         sum(h.get("total", 0) for h in historico),
+        "total_pedidos":        len(risco.get("pedidos", [])),
+        "produto_mais_vendido": (produtos.get("produtos") or [None])[0],
+        "tendencia":            vendas.get("tendencia", "estável"),
     }
 
 
 def analisar_com_api(usuario_id: int) -> dict:
-    import urllib.request
-    import json
-    import re
-
-    print("\n🤖 Consultando API...")
-
     dados = coletar_dados_resumo(usuario_id)
 
-    prompt = f"""
-Você é um analista de dados. Analise os dados de vendas abaixo e retorne SOMENTE um JSON válido,
-sem markdown, sem explicações, sem blocos de código. Apenas o JSON puro.
+    prompt = (
+        "Você é um analista de dados. Analise os dados de vendas abaixo e retorne SOMENTE um JSON válido, "
+        "sem markdown, sem explicações, sem blocos de código. Apenas o JSON puro.\n\n"
+        f"Dados:\n{json.dumps(dados, ensure_ascii=False, default=str)}\n\n"
+        'Retorne exatamente neste formato:\n'
+        '{\n'
+        '  "cards": {\n'
+        '    "vendas_totais": {"valor": <número>, "variacao_pct": <número com 1 casa decimal>, "tendencia": "alta" ou "queda" ou "estável"},\n'
+        '    "receita_media": {"valor": <número>, "variacao_pct": <número>},\n'
+        '    "produto_mais_vendido": {"nome": "<string>", "unidades": <número>},\n'
+        '    "total_pedidos": {"valor": <número>, "variacao_pct": <número>}\n'
+        '  },\n'
+        '  "insights": ["<frase curta de insight 1>", "<frase curta de insight 2>", "<frase curta de insight 3>"],\n'
+        '  "alerta": "<string ou null se não houver alerta>"\n'
+        '}'
+    )
 
-Dados:
-{json.dumps(dados, ensure_ascii=False, default=str)}
-
-Retorne exatamente neste formato:
-{{
-  "cards": {{
-    "vendas_totais": {{
-      "valor": <número>,
-      "variacao_pct": <número com 1 casa decimal>,
-      "tendencia": "alta" ou "queda" ou "estável"
-    }},
-    "receita_media": {{
-      "valor": <número>,
-      "variacao_pct": <número>
-    }},
-    "produto_mais_vendido": {{
-      "nome": "<string>",
-      "unidades": <número>
-    }},
-    "total_pedidos": {{
-      "valor": <número>,
-      "variacao_pct": <número>
-    }}
-  }},
-  "insights": [
-    "<frase curta de insight 1>",
-    "<frase curta de insight 2>",
-    "<frase curta de insight 3>"
-  ],
-  "alerta": "<string ou null se não houver alerta>"
-}}
-"""
-
-    payload = json.dumps({
-        "message": prompt,
-        "provider": "chatgpt"
-    }).encode("utf-8")
-
+    payload = json.dumps({"message": prompt, "provider": "chatgpt"}).encode("utf-8")
     req = urllib.request.Request(
         "https://darkscrapper.squareweb.app/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
-        method="POST"
+        method="POST",
     )
 
     try:
@@ -592,7 +486,6 @@ Retorne exatamente neste formato:
             resposta = json.loads(resp.read().decode("utf-8"))
 
         texto = resposta.get("reply", "").strip()
-
         if not texto:
             return {"erro": "API retornou vazio"}
 
@@ -600,100 +493,49 @@ Retorne exatamente neste formato:
         texto = re.sub(r"\s*```$", "", texto)
 
         try:
-            resultado = json.loads(texto)
-        except:
-            print("⚠️ Resposta bruta:", texto)
+            return json.loads(texto)
+        except Exception:
             return {"erro": "JSON inválido", "raw": texto}
 
-        print("  ✅ API respondeu OK")
-        return resultado
-
     except urllib.error.HTTPError as e:
-        erro = e.read().decode()
-        print(f"  ❌ Erro HTTP {e.code}: {erro}")
-        return {"erro": f"HTTP {e.code}: {erro}"}
+        return {"erro": f"HTTP {e.code}: {e.read().decode()}"}
     except Exception as e:
-        print(f"  ❌ Erro: {e}")
         return {"erro": str(e)}
 
 
-# 🔁 COMPATIBILIDADE
-analisar_com_gemini = analisar_com_api
-
-
-# ══════════════════════════════════════════════
-#  MENU INTERATIVO
-# ══════════════════════════════════════════════
-
-def menu():
-    print("\n🔐 Para testes manuais, informe o nome do usuário:")
+if __name__ == "__main__":
     username = input("Usuário: ").strip()
     usuario_id = get_usuario_id(username)
     if not usuario_id:
-        print(f"❌ Usuário '{username}' não encontrado!")
-        return
-    
+        print(f"Usuário '{username}' não encontrado!")
+        exit(1)
+
     while True:
-        print("\n" + "═"*45)
-        print("  PIM 2026 — Painel de Análise")
-        print(f"  Usuário: {username} (ID: {usuario_id})")
-        print("═"*45)
-        print("  1. Importar CSV para o banco")
-        print("  2. Gerar análises do painel (ML)")
-        print("  3. Importar CSV + gerar análises")
-        print("  4. Análise inteligente (API)")
-        print("  5. Redefinir meus dados")
-        print("  0. Sair")
-        print("═"*45)
+        print(f"\n{'='*45}\n  PIM 2026 — Painel de Análise\n  Usuário: {username} (ID: {usuario_id})\n{'='*45}")
+        print("  1. Importar CSV\n  2. Gerar análises (ML)\n  3. Importar + Gerar\n  4. Análise inteligente (API)\n  5. Redefinir dados\n  0. Sair")
         op = input("Opção: ").strip()
 
         if op == "0":
-            print("Saindo...")
             break
-
-        elif op == "1":
+        elif op in ("1", "3"):
             caminho = input("Caminho do CSV: ").strip().strip('"').strip("'")
-            tabela  = input("Tabela (vazio = detectar automaticamente): ").strip() or None
+            tabela  = input("Tabela (vazio = detectar): ").strip() or None
             try:
                 total = importar_csv(caminho, usuario_id, tabela=tabela)
-                print(f"\n✅ {total} linha(s) inserida(s) com sucesso.")
+                print(f"{total} linha(s) inserida(s).")
             except Exception as e:
-                print(f"\n❌ Erro: {e}")
-
+                print(f"Erro: {e}")
+                if op == "3":
+                    continue
+            if op == "3":
+                print(json.dumps(gerar_painel(usuario_id), ensure_ascii=False, indent=2, default=str))
         elif op == "2":
-            resultado = gerar_painel(usuario_id)
-            print("\n" + json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
-
-        elif op == "3":
-            caminho = input("Caminho do CSV: ").strip().strip('"').strip("'")
-            tabela  = input("Tabela (vazio = detectar automaticamente): ").strip() or None
-            try:
-                total = importar_csv(caminho, usuario_id, tabela=tabela)
-                print(f"\n✅ {total} linha(s) inserida(s).")
-            except Exception as e:
-                print(f"\n❌ Erro na importação: {e}")
-                continue
-            resultado = gerar_painel(usuario_id)
-            print("\n" + json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
-        
+            print(json.dumps(gerar_painel(usuario_id), ensure_ascii=False, indent=2, default=str))
         elif op == "4":
-            resultado = analisar_com_api(usuario_id)
-            print("\n" + json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
-        
+            print(json.dumps(analisar_com_api(usuario_id), ensure_ascii=False, indent=2, default=str))
         elif op == "5":
-            confirm = input("⚠️ Tem certeza que deseja remover TODOS os seus dados? (s/N): ")
-            if confirm.lower() == 's':
-                resultado = resetar_dados_usuario(usuario_id)
-                if resultado["success"]:
-                    print(f"✅ {resultado['mensagem']}")
-                else:
-                    print(f"❌ Erro: {resultado['erro']}")
-            else:
-                print("Operação cancelada.")
-
+            if input("Remover TODOS os seus dados? (s/N): ").lower() == "s":
+                r = resetar_dados_usuario(usuario_id)
+                print(r["mensagem"] if r["success"] else f"Erro: {r['erro']}")
         else:
             print("Opção inválida.")
-
-
-if __name__ == "__main__":
-    menu()
