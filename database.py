@@ -13,7 +13,7 @@ def conectar():
 def get_usuario_id(username: str) -> int | None:
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM Usuarios WHERE nome_usuario = %s", (username,))
+    cursor.execute("SELECT ID_Usuario FROM Usuarios WHERE Nome_Usuario = %s", (username,))
     result = cursor.fetchone()
     cursor.close()
     conn.close()
