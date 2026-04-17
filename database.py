@@ -12,10 +12,40 @@ def conectar():
     )
 
 def get_usuario_id(username: str) -> int:
-    """Busca o ID do usuário pelo nome de usuário"""
+    """
+    Busca o ID do usuário pelo nome de usuário.
+    Tenta diferentes nomes possíveis para a coluna ID.
+    """
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM Usuarios WHERE nome_usuario = %s", (username,))
+    
+    # Primeiro, descobre qual é o nome da coluna ID
+    cursor.execute("DESCRIBE Usuarios")
+    colunas = cursor.fetchall()
+    nomes_colunas = [c[0] for c in colunas]
+    
+    # Possíveis nomes para a coluna de ID
+    possiveis_ids = ['usuario_id', 'id_usuario', 'user_id', 'id', 'ID', 'UsuarioID']
+    
+    coluna_id = None
+    for pid in possiveis_ids:
+        if pid in nomes_colunas:
+            coluna_id = pid
+            break
+    
+    if not coluna_id:
+        # Se não encontrar, usa a primeira coluna que parecer ser ID
+        for col in nomes_colunas:
+            if 'id' in col.lower():
+                coluna_id = col
+                break
+    
+    if not coluna_id:
+        cursor.close()
+        conn.close()
+        raise Exception("Não foi possível encontrar coluna de ID na tabela Usuarios")
+    
+    cursor.execute(f"SELECT {coluna_id} FROM Usuarios WHERE nome_usuario = %s", (username,))
     result = cursor.fetchone()
     cursor.close()
     conn.close()
@@ -29,7 +59,10 @@ def limpar_dados_usuario(usuario_id: int):
     tabelas = ['Itens_Pedido', 'Pedidos', 'Produtos', 'Clientes']
     
     for tabela in tabelas:
-        cursor.execute(f"DELETE FROM {tabela} WHERE usuario_id = %s", (usuario_id,))
+        try:
+            cursor.execute(f"DELETE FROM {tabela} WHERE usuario_id = %s", (usuario_id,))
+        except Exception as e:
+            print(f"⚠️ Erro ao limpar {tabela}: {e}")
     
     conn.commit()
     cursor.close()
