@@ -96,10 +96,14 @@ def limpar_email(s: pd.Series) -> pd.Series:
 
 
 def limpar_decimal(s: pd.Series) -> pd.Series:
-    s = (s.astype(str).str.replace(r"[R$\s]", "", regex=True)
-          .str.replace(r"\.", "", regex=True).str.replace(",", ".", regex=False)
-          .apply(lambda x: np.nan if x == "nan" else x))
-    return pd.to_numeric(s, errors="coerce").round(2)
+    def _parse(x):
+        x = re.sub(r"[R$\s]", "", str(x)).strip()
+        if x == "nan":
+            return np.nan
+        if "," in x:
+            x = x.replace(".", "").replace(",", ".")
+        return x
+    return pd.to_numeric(s.apply(_parse), errors="coerce").round(2)
 
 
 def limpar_inteiro(s: pd.Series) -> pd.Series:
