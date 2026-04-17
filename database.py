@@ -1,22 +1,8 @@
 import os
 import mysql.connector
 from mysql.connector import Error
-from sqlalchemy import create_engine
-
-def _get_url():
-    host = os.getenv("DB_HOST", "square-cloud-db-01bd976874664d4b80775f7386d40abe.squareweb.app")
-    port = int(os.getenv("DB_PORT", "7200"))
-    user = os.getenv("DB_USER", "squarecloud")
-    pwd  = os.getenv("DB_PASS", "626wMS71k1qWsCadpnnnmlyu")
-    db   = os.getenv("DB_NAME", "squarecloud")
-    return f"mysql+mysqlconnector://{user}:{pwd}@{host}:{port}/{db}"
-
-def get_engine():
-    """SQLAlchemy engine — usado pelo pandas para evitar warnings."""
-    return create_engine(_get_url())
 
 def conectar():
-    """Conexão DBAPI2 pura — usada para INSERT/DELETE/DDL."""
     return mysql.connector.connect(
         host=os.getenv("DB_HOST", "square-cloud-db-01bd976874664d4b80775f7386d40abe.squareweb.app"),
         port=int(os.getenv("DB_PORT", "7200")),
