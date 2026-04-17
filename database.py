@@ -31,12 +31,20 @@ def limpar_dados_usuario(usuario_id: int):
 def verificar_tabelas():
     conn = conectar()
     cursor = conn.cursor()
-    for tabela in ("Clientes", "Produtos", "Pedidos", "Itens_Pedido"):
+    alteracoes = [
+        ("Clientes",    "usuario_id INT"),
+        ("Produtos",    "usuario_id INT"),
+        ("Pedidos",     "usuario_id INT"),
+        ("Itens_Pedido","usuario_id INT"),
+        ("Clientes",    "Data_Cadastro_Cliente DATETIME"),
+        ("Clientes",    "Senha_Cliente_Hash VARCHAR(255)"),
+    ]
+    for tabela, coluna in alteracoes:
         try:
-            cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN usuario_id INT")
+            cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna}")
         except Exception as e:
             if "Duplicate column" not in str(e):
-                print(f"Erro em {tabela}: {e}")
+                print(f"Erro em {tabela} ({coluna}): {e}")
     conn.commit()
     cursor.close()
     conn.close()
